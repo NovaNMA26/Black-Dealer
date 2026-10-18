@@ -232,7 +232,10 @@ async function signOutLocal(){
 }
 async function enter(user){
   var r=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();
-  if(r.error)throw r.error;
+  if(r.error){
+    var role='?';try{var tk=(await sb.auth.getSession()).data.session.access_token;role=JSON.parse(atob(tk.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).role}catch(x){}
+    throw new Error(r.error.message+' [Rolle: '+role+', Code: '+(r.error.code||'-')+']');
+  }
   if(!r.data){await sb.auth.signOut();return false}
   S.me=r.data;
   await refresh();
