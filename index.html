@@ -132,8 +132,8 @@ th.num,td.num{text-align:right;white-space:nowrap}
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* ============ HIER EINTRAGEN (siehe ANLEITUNG) ============ */
-var SUPABASE_URL = 'https://dedofidqzyduenadpgwc.supabase.co';
-var SUPABASE_KEY = 'sb_publishable_c9meWXUfDEcqHgDtllDhUQ_RMsEr-U5';
+var SUPABASE_URL = 'https://DEIN-PROJEKT.supabase.co';
+var SUPABASE_KEY = 'DEIN-ANON-KEY';
 var EMAIL_DOMAIN = 'blackdealer.app';   // nur intern, es werden nie E-Mails verschickt
 /* ========================================================== */
 (function(){
@@ -233,8 +233,13 @@ async function signOutLocal(){
 async function enter(user){
   var r=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();
   if(r.error){
-    var role='?';try{var tk=(await sb.auth.getSession()).data.session.access_token;role=JSON.parse(atob(tk.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).role}catch(x){}
-    throw new Error(r.error.message+' [Rolle: '+role+', Code: '+(r.error.code||'-')+']');
+    var dbg=[];
+    try{var gs=await sb.auth.getSession();var ss=gs&&gs.data&&gs.data.session;dbg.push('Sitzung: '+(ss?'ja':'NEIN'));
+      if(ss){var tk=ss.access_token;dbg.push('Token: '+(tk?tk.length+' Zeichen':'leer'));try{dbg.push('Rolle: '+JSON.parse(atob(tk.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).role)}catch(x){dbg.push('Token nicht lesbar')}}
+    }catch(x){dbg.push('getSession-Fehler: '+(x&&x.message))}
+    try{localStorage.setItem('bdt','1');localStorage.removeItem('bdt');dbg.push('Speicher: ok')}catch(x){dbg.push('Speicher: BLOCKIERT')}
+    dbg.push('Key: '+String(SUPABASE_KEY).slice(0,6)+'… ('+String(SUPABASE_KEY).length+')');
+    throw new Error(r.error.message+' ['+dbg.join(', ')+', Code: '+(r.error.code||'-')+']');
   }
   if(!r.data){await sb.auth.signOut();return false}
   S.me=r.data;
