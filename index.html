@@ -132,8 +132,8 @@ th.num,td.num{text-align:right;white-space:nowrap}
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* ============ HIER EINTRAGEN (siehe ANLEITUNG) ============ */
-var SUPABASE_URL = 'https://dedofidqzyduenadpgwc.supabase.co';
-var SUPABASE_KEY = 'sb_publishable_c9meWXUfDEcqHgDtllDhUQ_RMsEr-U5';
+var SUPABASE_URL = 'https://DEIN-PROJEKT.supabase.co';
+var SUPABASE_KEY = 'DEIN-ANON-KEY';
 var EMAIL_DOMAIN = 'blackdealer.app';   // nur intern, es werden nie E-Mails verschickt
 /* ========================================================== */
 (function(){
@@ -458,8 +458,11 @@ function vAccount(){
 var VIEWFN={sale:vSale,sales:vSales,notes:vNotes,prices:vPrices,team:vTeam,account:vAccount};
 
 function allowed(v){var d=VIEWS.filter(function(x){return x[0]===v})[0];return v==='account'||(d&&(!d[2]||canManage()))}
+var wipe=false, FORMSEL='#nu,#nd,#np,#nr,#nl,#nt,#ni,#o1,#o2,#o3,[id^="pw-"]';
+function snapForm(){var m={};$main.querySelectorAll(FORMSEL).forEach(function(e){m[e.id]=e.type==='checkbox'?e.checked:e.value});return m}
+function restoreForm(m){if(!m)return;Object.keys(m).forEach(function(id){var e=document.getElementById(id);if(!e)return;if(e.type==='checkbox')e.checked=m[id];else e.value=m[id]})}
 function render(){
-  var y=window.scrollY;
+  var y=window.scrollY, snap=wipe?null:snapForm();wipe=false;
   if(!S.me||!S.me.active){
     $nav.innerHTML='';$who.innerHTML='';$bar.hidden=true;
     $main.innerHTML=S.me?vPending():vLogin();
@@ -470,6 +473,7 @@ function render(){
   $nav.innerHTML=VIEWS.filter(function(v){return !v[2]||canManage()}).map(function(v){return '<button type="button" data-view="'+v[0]+'"'+(S.view===v[0]?' aria-current="page"':'')+'>'+v[1]+(v[0]==='team'&&waiting?' <span class="pill on">'+waiting+' neu</span>':'')+'</button>'}).join('');
   $who.innerHTML='<span><b>'+esc(S.me.display)+'</b> · '+esc(rankName(S.me.rank))+'</span><button type="button" class="btn sm sec" data-view="account">Konto</button><button type="button" class="btn sm sec" id="logout">Abmelden</button>';
   $main.innerHTML=VIEWFN[S.view]();
+  restoreForm(snap);
   if(S.view==='sale'){var c=calc();$bar.hidden=false;$bar.innerHTML='<span><span class="muted">'+c.count+' Artikel</span><br><b id="bar-total">'+gn(c.total)+'</b></span><button type="button" class="btn" data-act="gobeleg">Zum Beleg</button>'}
   else $bar.hidden=true;
   window.scrollTo(0,y);
@@ -477,6 +481,7 @@ function render(){
 function softRender(){
   var a=document.activeElement;
   if(a&&$main.contains(a)&&/INPUT|SELECT|TEXTAREA/.test(a.tagName)){pending=true;return}
+  if(S.me&&S.view==='prices'&&!pending&&$main.querySelector('.vk')){var dirty=false;$main.querySelectorAll('.vk').forEach(function(i){if(parseFloat(i.value)!==priceOf(i.dataset.id))dirty=true});if(dirty)return}
   render();
 }
 document.addEventListener('focusout',function(){if(pending){pending=false;setTimeout(render,0)}});
@@ -539,7 +544,7 @@ $main.addEventListener('submit',async function(e){
       try{await gt('/token?grant_type=password',{email:emailOf(S.me.username),password:a})}catch(x){return setErr('Das aktuelle Passwort ist falsch.')}
       await ensureFresh();
       await gt('/user',{password:b},SESS&&SESS.access_token,'PUT');
-      S.err='';toast('Passwort geändert');render();
+      S.err='';toast('Passwort geändert');wipe=true;render();
     }
   }catch(err){
     setErr(niceErr(err));
@@ -583,7 +588,7 @@ $main.addEventListener('click',async function(e){
     var ie=document.getElementById('ni');
     var n1=await sb.from('notes').insert({label:l,text:tx,important:!!(ie&&ie.checked&&canManage())});
     if(n1.error)return fail(n1.error);
-    toast('Notiz gespeichert');await refresh();return render();
+    toast('Notiz gespeichert');await refresh();wipe=true;return render();
   }
   if(a==='noteimp'&&canManage()){
     var n=S.data.notes.filter(function(x){return x.id===id})[0];
@@ -611,14 +616,14 @@ $main.addEventListener('click',async function(e){
       var su=await gt('/signup',{email:emailOf(u),password:pw,data:{display:d}});
       var up=await sb.from('profiles').update({active:true,rank:rk}).eq('id',newUserId(su));
       if(up.error)throw up.error;
-      toast('Mitarbeiter angelegt');
+      toast('Mitarbeiter angelegt');wipe=true;
     }catch(x){fail(x)}
     S.busy=false;await refresh();return render();
   }
   if(a==='staffpw'){
     var np=val('pw-'+id);if(np.length<6)return toast('Passwort: mindestens 6 Zeichen');
     var rp=await sb.rpc('admin_set_password',{target:id,new_password:np});
-    if(rp.error)return fail(rp.error);toast('Passwort gesetzt');return;
+    if(rp.error)return fail(rp.error);toast('Passwort gesetzt');var pe=document.getElementById('pw-'+id);if(pe)pe.value='';return;
   }
   if(a==='staffact'&&id!==S.me.id){
     var m2=memberById(id);var ua=await sb.from('profiles').update({active:!m2.active}).eq('id',id);
