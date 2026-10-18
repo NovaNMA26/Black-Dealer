@@ -132,8 +132,8 @@ th.num,td.num{text-align:right;white-space:nowrap}
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* ============ HIER EINTRAGEN (siehe ANLEITUNG) ============ */
-var SUPABASE_URL = 'https://dedofidqzyduenadpgwc.supabase.co';
-var SUPABASE_KEY = 'sb_publishable_c9meWXUfDEcqHgDtllDhUQ_RMsEr-U5';
+var SUPABASE_URL = 'https://DEIN-PROJEKT.supabase.co';
+var SUPABASE_KEY = 'DEIN-ANON-KEY';
 var EMAIL_DOMAIN = 'blackdealer.app';   // nur intern, es werden nie E-Mails verschickt
 /* ========================================================== */
 (function(){
@@ -173,7 +173,30 @@ function validUser(u){return /^[a-z0-9._-]{2,30}$/.test(u)}
 function normUser(u){return u.trim().toLowerCase()}
 
 /* ---------- Verbindung & Daten ---------- */
-function tmpClient(){return window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}})}
+/* Eigene, schlanke Anmeldung direkt gegen Supabase (ohne Sitzungsverwaltung der Bibliothek) */
+var SESS=null, SKEY='bd_session';
+async function gt(path,body,tok,method){
+  var res=await fetch(SUPABASE_URL.replace(/\/$/,'')+'/auth/v1'+path,{method:method||'POST',headers:Object.assign({'Content-Type':'application/json',apikey:SUPABASE_KEY},tok?{Authorization:'Bearer '+tok}:{}),body:body?JSON.stringify(body):undefined});
+  var j={};try{j=await res.json()}catch(e){}
+  if(!res.ok){var er=new Error(j.msg||j.error_description||j.message||(typeof j.error==='string'?j.error:'')||('Fehler '+res.status));er.status=res.status;throw er}
+  return j;
+}
+function storeSess(j){
+  SESS=j&&j.access_token?{access_token:j.access_token,refresh_token:j.refresh_token,exp:Math.floor(Date.now()/1000)+(j.expires_in||3600),uid:(j.user||{}).id}:null;
+  try{if(SESS)localStorage.setItem(SKEY,JSON.stringify(SESS));else localStorage.removeItem(SKEY)}catch(e){}
+}
+function loadSess(){try{SESS=JSON.parse(localStorage.getItem(SKEY)||'null')}catch(e){SESS=null}}
+var refreshing=null;
+async function ensureFresh(){
+  if(!SESS||SESS.exp-Math.floor(Date.now()/1000)>60)return;
+  if(!refreshing)refreshing=(async function(){
+    try{var j=await gt('/token?grant_type=refresh_token',{refresh_token:SESS.refresh_token});j.user=j.user||{id:SESS.uid};storeSess(j)}
+    catch(e){if(e.status===400||e.status===401||e.status===403){storeSess(null)}}
+    refreshing=null;
+  })();
+  await refreshing;
+}
+function newUserId(j){return (j.user&&j.user.id)||j.id}
 function niceErr(e){
   var m=String((e&&e.message)||e||'');
   if(/invalid login/i.test(m))return 'Benutzername oder Passwort falsch.';
@@ -227,21 +250,14 @@ function startPoll(){
 document.addEventListener('visibilitychange',async function(){ if(!document.hidden&&S.me){await refresh();softRender()} });
 async function signOutLocal(){
   clearInterval(pollT);S.authMode='login';S.me=null;S.cart={};S.done=null;S.err='';S.data={sales:[],notes:[],prices:[],members:[]};
-  try{await sb.auth.signOut()}catch(e){}
+  var tk=SESS&&SESS.access_token;storeSess(null);
+  try{if(tk)await gt('/logout',null,tk)}catch(e){}
   render();
 }
 async function enter(user){
   var r=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();
-  if(r.error){
-    var dbg=[];
-    try{var gs=await sb.auth.getSession();var ss=gs&&gs.data&&gs.data.session;dbg.push('Sitzung: '+(ss?'ja':'NEIN'));
-      if(ss){var tk=ss.access_token;dbg.push('Token: '+(tk?tk.length+' Zeichen':'leer'));try{dbg.push('Rolle: '+JSON.parse(atob(tk.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).role)}catch(x){dbg.push('Token nicht lesbar')}}
-    }catch(x){dbg.push('getSession-Fehler: '+(x&&x.message))}
-    try{localStorage.setItem('bdt','1');localStorage.removeItem('bdt');dbg.push('Speicher: ok')}catch(x){dbg.push('Speicher: BLOCKIERT')}
-    dbg.push('Key: '+String(SUPABASE_KEY).slice(0,6)+'… ('+String(SUPABASE_KEY).length+')');
-    throw new Error(r.error.message+' ['+dbg.join(', ')+', Code: '+(r.error.code||'-')+']');
-  }
-  if(!r.data){await sb.auth.signOut();return false}
+  if(r.error)throw r.error;
+  if(!r.data){storeSess(null);return false}
   S.me=r.data;
   await refresh();
   startPoll();
@@ -249,14 +265,14 @@ async function enter(user){
 }
 async function boot(){
   if(!window.supabase||!SUPABASE_URL||/DEIN-PROJEKT/.test(SUPABASE_URL)||/DEIN-/.test(SUPABASE_KEY)){S.cfgErr=true;S.booted=true;render();return}
-  sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+  loadSess();
+  sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{accessToken:async function(){await ensureFresh();return SESS?SESS.access_token:null}});
   try{
-    var s=await sb.auth.getSession();
+    await ensureFresh();
     var h=await sb.rpc('has_users');if(!h.error)S.hasUsers=!!h.data;
-    if(s.data&&s.data.session)await enter(s.data.session.user);
+    if(SESS&&!(await enter({id:SESS.uid})))S.err='';
   }catch(e){S.err=niceErr(e)}
   S.booted=true;render();
-  sb.auth.onAuthStateChange(function(ev){ if(ev==='SIGNED_OUT'&&S.me){S.me=null;render()} });
 }
 
 /* ---------- Rechnen ---------- */
@@ -497,10 +513,10 @@ $main.addEventListener('submit',async function(e){
     if(k==='login'){
       var u=normUser(val('lu')),pw=document.getElementById('lp').value;
       if(!validUser(u))return setErr('Benutzername oder Passwort falsch.');
-      var r=await sb.auth.signInWithPassword({email:emailOf(u),password:pw});
-      if(r.error)return setErr(niceErr(r.error));
+      var r=await gt('/token?grant_type=password',{email:emailOf(u),password:pw});
+      storeSess(r);
       S.err='';S.view='sale';
-      if(!(await enter(r.data.user)))return setErr('Dieser Zugang existiert nicht mehr.');
+      if(!(await enter({id:r.user.id})))return setErr('Dieser Zugang existiert nicht mehr.');
       return render();
     }
     if(k==='register'){
@@ -509,21 +525,20 @@ $main.addEventListener('submit',async function(e){
       if(!d)return setErr('Bitte einen Anzeigenamen eingeben.');
       if(p1.length<6)return setErr('Das Passwort braucht mindestens 6 Zeichen.');
       if(p1!==p2)return setErr('Die Passwörter stimmen nicht überein.');
-      var r2=await sb.auth.signUp({email:emailOf(u2),password:p1,options:{data:{display:d}}});
-      if(r2.error)return setErr(niceErr(r2.error));
-      if(!r2.data.session)return setErr('Der Zugang wurde angelegt, aber Supabase verlangt noch eine E-Mail-Bestätigung. Schalte „Confirm email“ aus (siehe Anleitung).');
+      var r2=await gt('/signup',{email:emailOf(u2),password:p1,data:{display:d}});
+      if(!r2.access_token)return setErr('Der Zugang wurde angelegt, aber Supabase verlangt noch eine E-Mail-Bestätigung. Schalte „Confirm email“ aus (siehe Anleitung).');
       S.err='';S.view='sale';
-      await enter(r2.data.user);
+      storeSess(r2);
+      await enter({id:newUserId(r2)});
       return render();
     }
     if(k==='pw'){
       var a=document.getElementById('o1').value,b=document.getElementById('o2').value,c=document.getElementById('o3').value;
       if(b.length<6)return setErr('Das neue Passwort braucht mindestens 6 Zeichen.');
       if(b!==c)return setErr('Die neuen Passwörter stimmen nicht überein.');
-      var chk=await tmpClient().auth.signInWithPassword({email:emailOf(S.me.username),password:a});
-      if(chk.error)return setErr('Das aktuelle Passwort ist falsch.');
-      var up=await sb.auth.updateUser({password:b});
-      if(up.error)return setErr(niceErr(up.error));
+      try{await gt('/token?grant_type=password',{email:emailOf(S.me.username),password:a})}catch(x){return setErr('Das aktuelle Passwort ist falsch.')}
+      await ensureFresh();
+      await gt('/user',{password:b},SESS&&SESS.access_token,'PUT');
       S.err='';toast('Passwort geändert');render();
     }
   }catch(err){
@@ -593,9 +608,8 @@ $main.addEventListener('click',async function(e){
     if(pw.length<6)return toast('Passwort: mindestens 6 Zeichen');
     S.busy=true;t.disabled=true;
     try{
-      var su=await tmpClient().auth.signUp({email:emailOf(u),password:pw,options:{data:{display:d}}});
-      if(su.error)throw su.error;
-      var up=await sb.from('profiles').update({active:true,rank:rk}).eq('id',su.data.user.id);
+      var su=await gt('/signup',{email:emailOf(u),password:pw,data:{display:d}});
+      var up=await sb.from('profiles').update({active:true,rank:rk}).eq('id',newUserId(su));
       if(up.error)throw up.error;
       toast('Mitarbeiter angelegt');
     }catch(x){fail(x)}
